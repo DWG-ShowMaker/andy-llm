@@ -1,0 +1,101 @@
+import os
+import argparse
+import torch
+import sentencepiece as spm
+from src.model.config import ModelConfig
+from src.model.transformer import MiniLLM
+from src.data.dataset import TextDataset, create_dataloader
+from src.training.trainer import Trainer
+
+def parse_args():
+    parser = argparse.ArgumentParser()
+    # 数据相关参数
+    parser.add_argument('--train_file', type=str, default='data/raw/train.txt')
+    parser.add_argument('--val_file', type=str, default='data/raw/validation.txt')
+    parser.add_argument('--tokenizer_path', type=str, default='data/processed/tokenizer.model')
+    
+    # 模型相关参数
+    parser.add_argument('--model_size', type=str, default='tiny', choices=['tiny', 'small', 'medium'])
+    parser.add_argument('--max_length', type=int, default=512)
+    
+    # 训练相关参数
+    parser.add_argument('--batch_size', type=int, default=32)
+    parser.add_argument('--learning_rate', type=float, default=3e-4)
+    parser.add_argument('--num_epochs', type=int, default=10)
+    parser.add_argument('--warmup_steps', type=int, default=1000)
+    parser.add_argument('--weight_decay', type=float, default=0.01)
+    parser.add_argument('--max_grad_norm', type=float, default=1.0)
+    parser.add_argument('--save_every', type=int, default=1)
+    
+    # 输出相关参数
+    parser.add_argument('--output_dir', type=str, default='checkpoints')
+    
+    return parser.parse_args()
+
+def main():
+    # 1. 解析参数
+    args = parse_args()
+    
+    # 2. 创建输出目录
+    os.makedirs(args.output_dir, exist_ok=True)
+    
+    # 3. 加载分词器
+    tokenizer = spm.SentencePieceProcessor()
+    tokenizer.load(args.tokenizer_path)
+    
+    # 4. 创建数据集和数据加载器
+    train_dataset = TextDataset(
+        file_path=args.train_file,
+        tokenizer=tokenizer,
+        max_length=args.max_length
+    )
+    val_dataset = TextDataset(
+        file_path=args.val_file,
+        tokenizer=tokenizer,
+        max_length=args.max_length
+    )
+    
+    train_dataloader = create_dataloader(train_dataset, args.batch_size)
+    val_dataloader = create_dataloader(val_dataset, args.batch_size, shuffle=False)
+    
+    # 5. 创建模型配置
+    model_config = ModelConfig(
+        model_size=args.model_size,
+        vocab_size=10000,  # 这个会根据model_size自动调整
+        d_model=128,      # 这个会根据model_size自动调整
+        nhead=2,          # 这个会根据model_size自动调整
+        num_layers=2,     # 这个会根据model_size自动调整
+        dim_feedforward=512,  # 这个会根据model_size自动调整
+        dropout=0.1,
+        max_seq_length=512,
+        pad_token_id=0,
+        bos_token_id=2,   # 确保添加这个参数
+        eos_token_id=3
+    )
+    
+    # 6. 创建模型
+    model = MiniLLM(model_config)
+    
+    # 7. 添加训练相关配置
+    training_config = argparse.Namespace(
+        learning_rate=args.learning_rate,
+        num_epochs=args.num_epochs,
+        warmup_steps=args.warmup_steps,
+        weight_decay=args.weight_decay,
+        max_grad_norm=args.max_grad_norm,
+        save_every=args.save_every,
+        output_dir=args.output_dir
+    )
+    
+    # 8. 创建训练器并开始训练
+    trainer = Trainer(
+        model=model,
+        train_dataloader=train_dataloader,
+        val_dataloader=val_dataloader,
+        config=training_config
+    )
+    
+    trainer.train()
+
+if __name__ == "__main__":
+    main() 
