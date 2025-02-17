@@ -51,28 +51,45 @@ def generate_text(
     model: MiniLLM,
     tokenizer: spm.SentencePieceProcessor,
     prompt: str,
-    max_length: int = 100,
-    temperature: float = 0.7,
-    top_k: int = 50,
-    top_p: float = 0.9,
-    device: torch.device = None
+    **kwargs
 ):
     """生成文本"""
+    # 启用KV缓存
+    model.enable_kv_cache()
+    
+    # 添加重复惩罚
+    repetition_penalty = kwargs.get('repetition_penalty', 1.2)
+    
+    # 添加长度惩罚
+    length_penalty = kwargs.get('length_penalty', 1.0)
+    
+    # 添加采样策略
+    do_sample = kwargs.get('do_sample', True)
+    num_beams = kwargs.get('num_beams', 1)
+    
     # 编码输入文本
     input_ids = torch.tensor(tokenizer.encode(prompt)).unsqueeze(0)
-    input_ids = input_ids.to(device)
+    input_ids = input_ids.to(model.device)
     
     # 生成文本
     output_ids = model.generate(
         input_ids=input_ids,
-        max_length=max_length,
-        temperature=temperature,
-        top_k=top_k,
-        top_p=top_p
+        max_length=kwargs.get('max_length', 100),
+        temperature=kwargs.get('temperature', 0.7),
+        top_k=kwargs.get('top_k', 50),
+        top_p=kwargs.get('top_p', 0.9),
+        repetition_penalty=repetition_penalty,
+        length_penalty=length_penalty,
+        do_sample=do_sample,
+        num_beams=num_beams
     )
     
     # 解码输出
     generated_text = tokenizer.decode(output_ids[0].tolist())
+    
+    # 生成完成后禁用缓存
+    model.disable_kv_cache()
+    
     return generated_text
 
 def main():
@@ -111,8 +128,7 @@ def main():
             max_length=args.max_length,
             temperature=args.temperature,
             top_k=args.top_k,
-            top_p=args.top_p,
-            device=device
+            top_p=args.top_p
         )
         print("\n生成的文本:")
         print(f"输入: {args.prompt}")

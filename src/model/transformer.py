@@ -2,7 +2,7 @@ import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Union
 
 class PositionalEncoding(nn.Module):
     """位置编码模块
@@ -56,6 +56,9 @@ class MiniLLM(nn.Module):
         super().__init__()
         self.config = config
         
+        # 设置设备
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'mps' if torch.backends.mps.is_available() else 'cpu')
+        
         # Token嵌入层：将输入的token ID转换为向量表示
         self.token_embedding = nn.Embedding(config.vocab_size, config.d_model)
         # 位置编码层：添加位置信息
@@ -82,6 +85,11 @@ class MiniLLM(nn.Module):
         
         # 初始化模型参数
         self._init_parameters()
+        
+        # KV缓存相关
+        self.enable_cache = False
+        self.cached_states = None
+        self.cached_length = 0
     
     def _init_parameters(self):
         """初始化模型参数
@@ -92,103 +100,164 @@ class MiniLLM(nn.Module):
             if p.dim() > 1:
                 nn.init.xavier_normal_(p)
     
+    def enable_kv_cache(self):
+        """启用KV缓存"""
+        self.enable_cache = True
+        self.cached_states = None
+        self.cached_length = 0
+    
+    def disable_kv_cache(self):
+        """禁用KV缓存"""
+        self.enable_cache = False
+        self.cached_states = None
+        self.cached_length = 0
+    
     def forward(
         self,
         input_ids: torch.Tensor,
         attention_mask: Optional[torch.Tensor] = None,
         labels: Optional[torch.Tensor] = None,
-    ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+        use_cache: bool = False
+    ) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
         """前向传播
         
         参数:
             input_ids: 输入token的ID [batch_size, seq_len]
             attention_mask: 注意力掩码 [batch_size, seq_len]
             labels: 目标token的ID [batch_size, seq_len]
+            use_cache: 是否使用KV缓存
         """
         # 1. 嵌入层
         x = self.token_embedding(input_ids) * math.sqrt(self.config.d_model)
-        x = self.pos_encoder(x)
         
-        # 2. 处理注意力掩码
+        # 2. 处理缓存和位置编码
+        if self.enable_cache and use_cache:
+            if self.cached_states is None:
+                # 首次运行，添加位置编码
+                x = self.pos_encoder(x)
+                self.cached_length = x.size(1)
+            else:
+                # 使用缓存时，只对新token添加位置编码
+                new_tokens = x[:, -1:, :]
+                position_ids = torch.arange(
+                    self.cached_length,
+                    self.cached_length + 1,
+                    dtype=torch.long,
+                    device=x.device
+                )
+                new_tokens = new_tokens + self.pos_encoder.pe[position_ids]
+                x = new_tokens
+                self.cached_length += 1
+        else:
+            x = self.pos_encoder(x)
+        
+        # 3. 处理注意力掩码
         if attention_mask is not None:
             key_padding_mask = (attention_mask == 0)
         else:
             key_padding_mask = None
         
-        # 3. Transformer层
-        hidden_states = self.transformer(x, src_key_padding_mask=key_padding_mask)
+        # 4. Transformer层
+        if self.enable_cache and use_cache:
+            if self.cached_states is None:
+                # 首次运行，生成并存储状态
+                hidden_states = self.transformer(x, src_key_padding_mask=key_padding_mask)
+                self.cached_states = hidden_states
+            else:
+                # 使用缓存的状态
+                new_hidden_states = self.transformer(x, src_key_padding_mask=key_padding_mask)
+                self.cached_states = torch.cat([self.cached_states, new_hidden_states], dim=1)
+                hidden_states = self.cached_states
+        else:
+            hidden_states = self.transformer(x, src_key_padding_mask=key_padding_mask)
+        
+        # 5. 输出层
         logits = self.output_layer(hidden_states)
         
-        # 4. 计算损失
+        # 6. 计算损失
         loss = None
         if labels is not None:
-            # 重塑logits和labels
             shift_logits = logits[..., :-1, :].contiguous()
             shift_labels = labels[..., 1:].contiguous()
-            
-            # 计算损失，忽略padding位置
             loss = F.cross_entropy(
                 shift_logits.view(-1, self.config.vocab_size),
                 shift_labels.view(-1),
-                ignore_index=-100,  # PyTorch默认使用-100作为忽略索引
+                ignore_index=-100,
                 reduction='mean'
             )
         
         return logits, loss
     
-    @torch.no_grad()
     def generate(
         self,
         input_ids: torch.Tensor,
         max_length: int = 100,
-        temperature: float = 1.0,
+        temperature: float = 0.7,
         top_k: int = 50,
         top_p: float = 0.9,
+        repetition_penalty: float = 1.2,
+        length_penalty: float = 1.0,
+        do_sample: bool = True,
+        num_beams: int = 1,
     ) -> torch.Tensor:
-        """生成文本
-        
-        参数:
-            input_ids: 输入序列
-            max_length: 最大生成长度
-            temperature: 采样温度，控制生成的随机性
-            top_k: Top-K采样的K值
-            top_p: Top-P采样的P值
-            
-        返回:
-            生成的token序列
-        """
-        self.eval()
+        """生成文本"""
         batch_size = input_ids.shape[0]
+        cur_len = input_ids.shape[1]
         
-        for _ in range(max_length):
-            # 1. 获取模型预测
-            logits, _ = self(input_ids)
-            next_token_logits = logits[:, -1, :] / temperature
+        # 存储生成的序列
+        generated_ids = input_ids
+        
+        # 生成文本
+        while cur_len < max_length:
+            # 前向传播获取logits
+            logits = self.forward(
+                input_ids=generated_ids,
+                use_cache=True
+            )[0]  # forward返回(logits, loss)，我们只需要logits
             
-            # 2. Top-K采样：只保留概率最高的K个token
+            # 获取最后一个时间步的logits
+            next_token_logits = logits[:, -1, :]
+            
+            # 应用温度
+            next_token_logits = next_token_logits / temperature
+            
+            # 应用重复惩罚
+            if repetition_penalty != 1.0:
+                for i in range(batch_size):
+                    for token_id in set(generated_ids[i].tolist()):
+                        next_token_logits[i, token_id] /= repetition_penalty
+            
+            # 应用top-k采样
             if top_k > 0:
                 indices_to_remove = next_token_logits < torch.topk(next_token_logits, top_k)[0][..., -1, None]
-                next_token_logits[indices_to_remove] = -float('Inf')
+                next_token_logits[indices_to_remove] = float('-inf')
             
-            # 3. Top-P采样（核采样）：只保留累积概率达到P的token
+            # 应用top-p采样
             if top_p < 1.0:
                 sorted_logits, sorted_indices = torch.sort(next_token_logits, descending=True)
                 cumulative_probs = torch.cumsum(F.softmax(sorted_logits, dim=-1), dim=-1)
+                
+                # 移除概率累积超过阈值的token
                 sorted_indices_to_remove = cumulative_probs > top_p
                 sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[..., :-1].clone()
                 sorted_indices_to_remove[..., 0] = 0
+                
                 indices_to_remove = sorted_indices_to_remove.scatter(1, sorted_indices, sorted_indices_to_remove)
-                next_token_logits[indices_to_remove] = -float('Inf')
+                next_token_logits[indices_to_remove] = float('-inf')
             
-            # 4. 采样下一个token
-            probs = F.softmax(next_token_logits, dim=-1)
-            next_token = torch.multinomial(probs, num_samples=1)
+            # 采样或贪婪解码
+            if do_sample:
+                probs = F.softmax(next_token_logits, dim=-1)
+                next_tokens = torch.multinomial(probs, num_samples=1)
+            else:
+                next_tokens = torch.argmax(next_token_logits, dim=-1, keepdim=True)
             
-            # 5. 将新token添加到序列中
-            input_ids = torch.cat([input_ids, next_token], dim=1)
+            # 拼接新token
+            generated_ids = torch.cat([generated_ids, next_tokens], dim=1)
+            cur_len += 1
             
-            # 6. 检查是否生成了结束符号
-            if (next_token == self.config.eos_token_id).all():
+            # 检查是否生成了结束符
+            if (generated_ids == self.config.eos_token_id).any(dim=1).all():
                 break
         
-        return input_ids 
+        return generated_ids 

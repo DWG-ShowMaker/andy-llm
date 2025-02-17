@@ -12,6 +12,10 @@ class ModelConfig:
         num_layers: int = 2,
         dim_feedforward: int = 512,
         dropout: float = 0.1,
+        attention_dropout: float = 0.1,
+        hidden_dropout: float = 0.1,
+        layer_norm_eps: float = 1e-5,
+        initializer_range: float = 0.02,
         max_seq_length: int = 512,
         pad_token_id: int = 0,
         bos_token_id: int = 2,
@@ -27,6 +31,10 @@ class ModelConfig:
             num_layers: transformer层数
             dim_feedforward: 前馈网络维度
             dropout: dropout比率
+            attention_dropout: 注意力层的dropout比率
+            hidden_dropout: 隐藏层的dropout比率
+            layer_norm_eps: 层归一化的epsilon值
+            initializer_range: 初始化范围
             max_seq_length: 最大序列长度
             pad_token_id: padding token的ID
             bos_token_id: 开始符的ID
@@ -40,6 +48,10 @@ class ModelConfig:
         self.num_layers = num_layers
         self.dim_feedforward = dim_feedforward
         self.dropout = dropout
+        self.attention_dropout = attention_dropout
+        self.hidden_dropout = hidden_dropout
+        self.layer_norm_eps = layer_norm_eps
+        self.initializer_range = initializer_range
         self.max_seq_length = max_seq_length
         self.pad_token_id = pad_token_id
         self.bos_token_id = bos_token_id
@@ -69,6 +81,10 @@ class ModelConfig:
             f"  num_layers={self.num_layers},\n"
             f"  dim_feedforward={self.dim_feedforward},\n"
             f"  dropout={self.dropout},\n"
+            f"  attention_dropout={self.attention_dropout},\n"
+            f"  hidden_dropout={self.hidden_dropout},\n"
+            f"  layer_norm_eps={self.layer_norm_eps},\n"
+            f"  initializer_range={self.initializer_range},\n"
             f"  max_seq_length={self.max_seq_length},\n"
             f"  pad_token_id={self.pad_token_id},\n"
             f"  bos_token_id={self.bos_token_id},\n"
@@ -86,6 +102,10 @@ class ModelConfig:
             'num_layers': self.num_layers,
             'dim_feedforward': self.dim_feedforward,
             'dropout': self.dropout,
+            'attention_dropout': self.attention_dropout,
+            'hidden_dropout': self.hidden_dropout,
+            'layer_norm_eps': self.layer_norm_eps,
+            'initializer_range': self.initializer_range,
             'max_seq_length': self.max_seq_length,
             'pad_token_id': self.pad_token_id,
             'bos_token_id': self.bos_token_id,
@@ -104,6 +124,10 @@ class ModelConfig:
             'num_layers': 2,
             'dim_feedforward': 512,
             'dropout': 0.1,
+            'attention_dropout': 0.1,
+            'hidden_dropout': 0.1,
+            'layer_norm_eps': 1e-5,
+            'initializer_range': 0.02,
             'max_seq_length': 512,
             'pad_token_id': 0,
             'bos_token_id': 2,

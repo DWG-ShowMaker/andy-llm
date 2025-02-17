@@ -1,6 +1,7 @@
 import os
 import sentencepiece as spm
 from typing import List
+import json
 
 def train_tokenizer(
     input_files: List[str],
@@ -23,7 +24,12 @@ def train_tokenizer(
     with open(temp_file, 'w', encoding='utf-8') as outf:
         for file_path in input_files:
             with open(file_path, 'r', encoding='utf-8') as inf:
-                outf.write(inf.read())
+                for line in inf:
+                    # 解析jsonl并提取文本
+                    item = json.loads(line)
+                    text = item['text'].strip()
+                    if text:
+                        outf.write(text + '\n')
     
     # 训练参数
     train_args = {
@@ -59,9 +65,9 @@ def main():
     os.makedirs("data/processed", exist_ok=True)
     
     # 准备训练文件
-    input_files = ["data/raw/train.txt"]
-    if os.path.exists("data/raw/validation.txt"):
-        input_files.append("data/raw/validation.txt")
+    input_files = ["data/raw/train.jsonl"]
+    if os.path.exists("data/raw/validation.jsonl"):
+        input_files.append("data/raw/validation.jsonl")
     
     # 检查文件是否存在且非空
     valid_files = []
