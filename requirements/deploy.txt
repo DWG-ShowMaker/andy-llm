@@ -1,0 +1,23 @@
+# 基础依赖
+torch>=2.0.0
+transformers>=4.30.0
+sentencepiece>=0.1.99
+
+# Web服务
+fastapi>=0.100.0
+uvicorn>=0.23.0
+gunicorn>=21.2.0
+python-multipart>=0.0.6
+
+# 监控和日志
+prometheus-client>=0.17.0
+python-json-logger>=2.0.7
+
+# 性能优化
+ninja>=1.11.0
+psutil>=5.9.0
+
+# 安全
+python-jose>=3.3.0
+passlib>=1.7.4
+bcrypt>=4.0.1 

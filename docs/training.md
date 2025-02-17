@@ -186,4 +186,25 @@
 2. **重复生成**
    - 调整采样温度
    - 使用重复惩罚
-   - 优化结束条件 
+   - 优化结束条件
+
+## 环境准备
+
+### 安装训练依赖
+```bash
+# 方式1：直接安装训练依赖
+pip install -r requirements/train.txt
+
+# 方式2：通过 setup.py 安装
+pip install -e ".[train]"
+```
+
+训练环境依赖说明：
+- torch: PyTorch 深度学习框架
+- transformers: Hugging Face 模型库
+- datasets: 数据集处理工具
+- wandb: 实验追踪和可视化
+- sentencepiece: 分词器训练
+- pandas & nltk: 数据预处理
+- tensorboard: 训练监控
+... 

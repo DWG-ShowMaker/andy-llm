@@ -261,3 +261,49 @@ class MiniLLM(nn.Module):
                 break
         
         return generated_ids 
+
+    def quantize(self, quantization_type='dynamic'):
+        """量化模型
+        
+        参数:
+            quantization_type: 量化类型，可选 'dynamic' 或 'static'
+        """
+        if quantization_type == 'dynamic':
+            # 动态量化，将线性层和嵌入层量化为INT8
+            self.token_embedding = torch.quantization.quantize_dynamic(
+                self.token_embedding,
+                {torch.nn.Embedding},
+                dtype=torch.qint8
+            )
+            self.output_layer = torch.quantization.quantize_dynamic(
+                self.output_layer,
+                {torch.nn.Linear},
+                dtype=torch.qint8
+            )
+            self.transformer = torch.quantization.quantize_dynamic(
+                self.transformer,
+                {torch.nn.Linear},
+                dtype=torch.qint8
+            )
+        elif quantization_type == 'static':
+            # 为Embedding层设置特殊的量化配置
+            float_qparams_config = torch.quantization.float_qparams_weight_only_qconfig
+            # 为其他层设置默认配置
+            default_qconfig = torch.quantization.get_default_qconfig('fbgemm')
+            
+            # 设置不同层的量化配置
+            self.qconfig_dict = {
+                'token_embedding': float_qparams_config,
+                '': default_qconfig  # 全局默认配置
+            }
+            
+            # 准备量化感知训练
+            if self.training:
+                torch.quantization.prepare_qat(self, inplace=True)
+            else:
+                torch.quantization.prepare(self, inplace=True)
+            
+            # 转换为量化模型
+            torch.quantization.convert(self, inplace=True)
+        
+        return self 
