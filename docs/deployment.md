@@ -266,18 +266,3 @@ uvicorn.run(
     ssl_certfile="cert.pem"
 )
 ```
-
-2. 添加认证：
-```python
-from fastapi.security import APIKeyHeader
-
-api_key_header = APIKeyHeader(name="X-API-Key")
-
-@app.post("/generate")
-async def generate(request: Request, api_key: str = Depends(api_key_header)):
-    if api_key != VALID_API_KEY:
-        raise HTTPException(status_code=403)
-    # ...
-```
-
-需要其他说明或补充吗？
