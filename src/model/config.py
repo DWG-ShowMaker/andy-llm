@@ -135,4 +135,22 @@ class ModelConfig:
         }
         # 更新默认值
         defaults.update(config_dict)
-        return cls(**defaults) 
+        return cls(**defaults)
+
+@dataclass
+class TrainingConfig:
+    # 基础配置
+    model_type: str = "chat"  # "chat" 或 "generation"
+    max_length: int = 512
+    batch_size: int = 16
+    
+    # 对话相关
+    max_history_turns: int = 3  # 保留的对话轮数
+    temperature: float = 0.7    # 生成温度
+    top_p: float = 0.9         # 核采样
+    
+    # 训练策略
+    warmup_steps: int = 1000
+    learning_rate: float = 2e-5
+    weight_decay: float = 0.01
+    gradient_accumulation_steps: int = 4 

@@ -73,4 +73,49 @@ def create_dataloader(
         shuffle=shuffle,
         num_workers=num_workers,
         pin_memory=True
-    ) 
+    )
+
+class ChatDataset(Dataset):
+    def __init__(self, tokenizer, data, max_length=512):
+        self.tokenizer = tokenizer
+        self.data = data
+        self.max_length = max_length
+        
+    def __getitem__(self, idx):
+        dialogue = self.data[idx]
+        turns = dialogue.split('\n')
+        
+        # 构建上下文
+        context = []
+        for i in range(0, len(turns)-1, 2):
+            human = turns[i]
+            assistant = turns[i+1] if i+1 < len(turns) else ""
+            
+            # 编码当前回合
+            inputs = self.tokenizer.encode(
+                "\n".join(context + [human]),
+                add_special_tokens=True,
+                max_length=self.max_length,
+                truncation=True
+            )
+            
+            # 编码目标回答
+            labels = self.tokenizer.encode(
+                assistant,
+                add_special_tokens=False,
+                max_length=self.max_length,
+                truncation=True
+            )
+            
+            context.extend([human, assistant])
+            
+            if len(inputs) + len(labels) <= self.max_length:
+                attention_mask = [1] * len(inputs)
+                return {
+                    "input_ids": inputs,
+                    "attention_mask": attention_mask,
+                    "labels": labels
+                }
+                
+    def __len__(self):
+        return len(self.data) 
