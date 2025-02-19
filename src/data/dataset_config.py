@@ -17,53 +17,53 @@ class DatasetConfig:
 
 # 预定义数据集配置
 DATASET_CONFIGS = {
-    # 指令微调数据
+    # 通用中文语料
+    "wiki": DatasetConfig(
+        name="wiki",
+        source="huggingface",
+        path="articles/wiki_zh",  # 更新为正确的路径
+        text_column="text",
+        min_length=100,
+        filter_rules=["长度过滤", "质量过滤"]
+    ),
+    
+    # Belle对话数据
     "belle": DatasetConfig(
         name="belle",
         source="huggingface",
-        path="BelleGroup/train_2M_CN",
+        path="BelleGroup/generated_chat_0.4M",  # 更新为可用的数据集
         text_column="text",
         min_length=50,
         filter_rules=["对话格式化"]
     ),
     
-    # Alpaca 中文指令数据
+    # Alpaca中文指令数据
     "alpaca": DatasetConfig(
         name="alpaca",
         source="huggingface",
-        path="silk-road/alpaca-data-gpt4-chinese",
+        path="shibing624/alpaca-zh",  # 更新为可用的数据集
         text_column="text",
         min_length=50,
         filter_rules=["对话格式化"]
     ),
-
-    # ChatGPT 对话数据
-    "chatgpt": DatasetConfig(
-        name="chatgpt",
-        source="huggingface",
-        path="fnlp/moss-003-sft-data",
-        text_column="conversation",
-        min_length=50,
-        filter_rules=["对话格式化"]
-    ),
-
-    # 医疗问答数据
-    "medical": DatasetConfig(
-        name="medical",
-        source="huggingface",
-        path="michael-wzhu/ChatMed_Consult_Dataset",
-        text_column="text",
-        min_length=50,
-        filter_rules=["对话格式化"]
-    ),
-
+    
     # 通用知识问答
     "qa": DatasetConfig(
         name="qa",
         source="huggingface",
-        path="wangrui6/Zhihu-KOL",
+        path="IDEA-CCNL/Ziya-Conv-Chinese",  # 更新为可用的数据集
         text_column="text",
         min_length=50,
         filter_rules=["对话格式化"]
+    ),
+
+    # 中文新闻数据
+    "news": DatasetConfig(
+        name="news",
+        source="huggingface",
+        path="csebuetnlp/xlsum_chinese",  # 更新为可用的数据集
+        text_column="text",
+        min_length=100,
+        filter_rules=["新闻格式化"]
     )
 } 
