@@ -9,6 +9,8 @@ from tqdm import tqdm
 from typing import Dict, Any
 from .early_stopping import EarlyStopping
 from transformers import get_cosine_schedule_with_warmup, get_linear_schedule_with_warmup
+from torch.cuda.amp import autocast, GradScaler
+import logging
 
 class Trainer:
     def __init__(
@@ -24,21 +26,28 @@ class Trainer:
         self.config = config
         
         # 设置设备
-        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        self.device = torch.device(config.device)
         self.model.to(self.device)
         
+        # 多GPU支持
+        if config.n_gpu > 1:
+            self.model = torch.nn.DataParallel(self.model)
+        
         # 优化器
-        self.optimizer = AdamW(
-            self.model.parameters(),
+        self.optimizer = torch.optim.AdamW(
+            model.parameters(),
             lr=config.learning_rate,
+            betas=(config.adam_beta1, config.adam_beta2),
+            eps=config.adam_epsilon,
             weight_decay=config.weight_decay
         )
         
-        # 添加混合精度训练
-        if torch.cuda.is_available():
-            self.scaler = torch.cuda.amp.GradScaler()
-        else:
-            self.scaler = None
+        # 混合精度训练
+        self.scaler = GradScaler() if config.fp16 else None
+        
+        # 日志设置
+        logging.basicConfig(level=logging.INFO)
+        self.logger = logging.getLogger(__name__)
         
         # 添加学习率调度器选项
         if config.scheduler == 'cosine':
@@ -155,42 +164,39 @@ class Trainer:
                 for k, v in batch.items()
             }
             
-            # 根据是否有GPU使用不同的训练逻辑
-            if torch.cuda.is_available():
-                # GPU训练 - 使用混合精度
-                with torch.cuda.amp.autocast():
-                    _, loss = self.model(
-                        input_ids=batch['input_ids'],
-                        attention_mask=batch['attention_mask'],
-                        labels=batch['labels']
-                    )
-                    loss = loss / self.gradient_accumulation_steps
+            # 清零梯度
+            self.optimizer.zero_grad()
+            
+            # 前向传播（使用混合精度）
+            if self.config.fp16:
+                with autocast():
+                    outputs = self.model(**batch)
+                    loss = outputs.loss / self.gradient_accumulation_steps
                 
-                # 使用scaler进行梯度缩放
+                # 反向传播
                 self.scaler.scale(loss).backward()
-                if (step + 1) % self.gradient_accumulation_steps == 0:
-                    self.scaler.unscale_(self.optimizer)
-                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.config.max_grad_norm)
-                    self.scaler.step(self.optimizer)
-                    self.scaler.update()
-                    self.optimizer.zero_grad()
-                    self.scheduler.step()
-            else:
-                # CPU训练 - 普通训练
-                _, loss = self.model(
-                    input_ids=batch['input_ids'],
-                    attention_mask=batch['attention_mask'],
-                    labels=batch['labels']
-                )
-                loss = loss / self.gradient_accumulation_steps
                 
-                # 普通反向传播
+                if self.config.max_grad_norm > 0:
+                    self.scaler.unscale_(self.optimizer)
+                    torch.nn.utils.clip_grad_norm_(
+                        self.model.parameters(),
+                        self.config.max_grad_norm
+                    )
+                
+                self.scaler.step(self.optimizer)
+                self.scaler.update()
+            else:
+                outputs = self.model(**batch)
+                loss = outputs.loss / self.gradient_accumulation_steps
                 loss.backward()
-                if (step + 1) % self.gradient_accumulation_steps == 0:
-                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.config.max_grad_norm)
-                    self.optimizer.step()
-                    self.optimizer.zero_grad()
-                    self.scheduler.step()
+                
+                if self.config.max_grad_norm > 0:
+                    torch.nn.utils.clip_grad_norm_(
+                        self.model.parameters(),
+                        self.config.max_grad_norm
+                    )
+                
+                self.optimizer.step()
             
             # 更新损失和进度条
             total_loss += loss.item()
@@ -232,11 +238,8 @@ class Trainer:
                 k: v.to(self.device) if isinstance(v, torch.Tensor) else v 
                 for k, v in batch.items()
             }
-            _, loss = self.model(
-                input_ids=batch['input_ids'],
-                attention_mask=batch['attention_mask'],
-                labels=batch['labels']
-            )
+            outputs = self.model(**batch)
+            loss = outputs.loss
             total_loss += loss.item()
             
             # 更新进度条

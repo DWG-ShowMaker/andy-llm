@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from typing import Optional
+import torch
 
 class ModelConfig:
     """模型配置类"""
@@ -144,13 +145,24 @@ class TrainingConfig:
     max_length: int = 512
     batch_size: int = 16
     
+    # 设备配置
+    device: str = "cuda" if torch.cuda.is_available() else "cpu"
+    n_gpu: int = torch.cuda.device_count()
+    fp16: bool = True  # 是否使用混合精度训练
+    
     # 对话相关
-    max_history_turns: int = 3  # 保留的对话轮数
-    temperature: float = 0.7    # 生成温度
-    top_p: float = 0.9         # 核采样
+    max_history_turns: int = 3
+    temperature: float = 0.7
+    top_p: float = 0.9
     
     # 训练策略
     warmup_steps: int = 1000
     learning_rate: float = 2e-5
     weight_decay: float = 0.01
-    gradient_accumulation_steps: int = 4 
+    gradient_accumulation_steps: int = 4
+    max_grad_norm: float = 1.0  # 梯度裁剪
+    
+    # 优化器配置
+    adam_beta1: float = 0.9
+    adam_beta2: float = 0.999
+    adam_epsilon: float = 1e-8 

@@ -2,10 +2,11 @@ import os
 import argparse
 import torch
 import sentencepiece as spm
-from src.model.config import ModelConfig
+from src.model.config import ModelConfig, TrainingConfig
 from src.model.transformer import MiniLLM
-from src.data.dataset import TextDataset, create_dataloader
+from src.data.dataset import TextDataset, create_dataloader, ChatDataset
 from src.training.trainer import Trainer
+import wandb
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -15,17 +16,19 @@ def parse_args():
     parser.add_argument('--tokenizer_path', type=str, default='data/processed/tokenizer.model')
     
     # 模型相关参数
-    parser.add_argument('--model_size', type=str, default='tiny', choices=['tiny', 'small', 'medium'])
+    parser.add_argument('--model_size', type=str, default='small')
     parser.add_argument('--max_length', type=int, default=512)
     
     # 训练相关参数
-    parser.add_argument('--batch_size', type=int, default=32)
+    parser.add_argument('--batch_size', type=int, default=16)
     parser.add_argument('--learning_rate', type=float, default=3e-4)
     parser.add_argument('--num_epochs', type=int, default=10)
     parser.add_argument('--warmup_steps', type=int, default=1000)
     parser.add_argument('--weight_decay', type=float, default=0.01)
     parser.add_argument('--max_grad_norm', type=float, default=1.0)
     parser.add_argument('--save_every', type=int, default=1)
+    parser.add_argument('--fp16', action='store_true')
+    parser.add_argument('--device', type=str, default='cuda')
     
     # 输出相关参数
     parser.add_argument('--output_dir', type=str, default='checkpoints')
@@ -103,24 +106,15 @@ def main():
         max_seq_length=args.max_length
     )
     
-    # 8. 创建模型
-    model = MiniLLM(model_config)
-    
-    # 9. 添加训练相关配置
-    training_config = argparse.Namespace(
-        learning_rate=args.learning_rate,
-        num_epochs=args.num_epochs,
-        warmup_steps=args.warmup_steps,
-        weight_decay=args.weight_decay,
-        max_grad_norm=args.max_grad_norm,
-        save_every=args.save_every,
-        output_dir=args.output_dir,
-        gradient_accumulation_steps=args.gradient_accumulation_steps,
-        scheduler=args.scheduler,
-        patience=args.patience,
-        min_delta=args.min_delta,
-        num_training_steps=args.num_training_steps
+    # 8. 创建训练配置
+    training_config = TrainingConfig(
+        batch_size=args.batch_size,
+        device=args.device,
+        fp16=args.fp16
     )
+    
+    # 9. 创建模型
+    model = MiniLLM(model_config)
     
     # 10. 创建训练器并开始训练
     trainer = Trainer(
@@ -130,7 +124,11 @@ def main():
         config=training_config
     )
     
-    trainer.train()
+    # 初始化wandb
+    wandb.init(project="andy-llm", config=args)
+    
+    # 开始训练
+    trainer.train(num_epochs=args.num_epochs)
 
 if __name__ == "__main__":
     main() 
