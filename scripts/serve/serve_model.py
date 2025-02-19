@@ -2,6 +2,7 @@ import argparse
 import torch
 import sys
 import os
+from torch.serialization import add_safe_globals
 
 # 添加项目根目录到 Python 路径
 root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -16,6 +17,9 @@ from src.tokenizer import Tokenizer
 
 app = FastAPI()
 
+# 添加 ModelConfig 到安全全局变量列表
+add_safe_globals([ModelConfig])
+
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('--model', type=str, required=True,
@@ -28,40 +32,51 @@ def parse_args():
                       help='端口号')
     return parser.parse_args()
 
-def load_quantized_model(model_path, device='cpu'):
-    """加载量化模型"""
+def load_quantized_model(model_path: str, device: str):
+    """加载量化模型
+    
+    Args:
+        model_path: 模型路径
+        device: 设备类型
+        
+    Returns:
+        model: 加载的模型
+        config: 模型配置
+        device: 实际使用的设备
+    """
     print("正在加载量化模型...")
-    checkpoint = torch.load(model_path, map_location='cpu')
+    
+    # 加载检查点
+    try:
+        # 首先尝试使用 weights_only=True
+        checkpoint = torch.load(model_path, map_location='cpu')
+    except Exception as e:
+        print(f"使用 weights_only=True 加载失败，尝试完整加载...")
+        # 如果失败，使用完整加载
+        checkpoint = torch.load(model_path, map_location='cpu', weights_only=False)
+    
+    # 获取配置
     config = ModelConfig.from_dict(checkpoint['config'])
     
     # 创建模型
     model = MiniLLM(config)
     
-    if 'quantization_backend' in checkpoint:
-        print(f"检测到量化模型 (backend: {checkpoint['quantization_backend']})")
-        backend = checkpoint['quantization_backend']
-        torch.backends.quantized.engine = backend
-        
-        # 获取原始状态字典
-        state_dict = checkpoint['model_state_dict']
-        
-        # 过滤掉量化相关的参数
-        filtered_state_dict = {}
-        for key, value in state_dict.items():
-            if not any(x in key for x in ['scale', 'zero_point', '_packed_params']):
-                filtered_state_dict[key] = value
-        
-        # 加载非量化参数
-        model.load_state_dict(filtered_state_dict, strict=False)
-        
-        # 设置为 CPU 设备
-        device = 'cpu'
-    else:
-        # 非量化模型直接加载
-        model.load_state_dict(checkpoint['model_state_dict'])
-        model = model.to(device)
+    # 加载模型权重
+    model.load_state_dict(checkpoint['model_state_dict'])
     
+    # 确定设备
+    if device == 'cuda' and not torch.cuda.is_available():
+        print("警告: CUDA 不可用，回退到 CPU")
+        device = 'cpu'
+    elif device == 'mps' and not torch.backends.mps.is_available():
+        print("警告: MPS 不可用，回退到 CPU")
+        device = 'cpu'
+    
+    # 将模型移动到指定设备
+    model = model.to(device)
     model.eval()
+    
+    print(f"模型将在 {device.upper()} 上运行")
     return model, config, device
 
 # 加载模型和分词器
@@ -70,11 +85,6 @@ args = parse_args()
 # 加载模型
 model, config, device = load_quantized_model(args.model, args.device)
 args.device = device  # 更新设备设置
-
-if device == 'cpu':
-    print("模型将在 CPU 上运行")
-else:
-    print(f"模型将在 {device} 上运行")
 
 # 加载分词器
 tokenizer = Tokenizer.load(args.tokenizer_path)
