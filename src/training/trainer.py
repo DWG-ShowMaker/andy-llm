@@ -290,21 +290,17 @@ class Trainer:
         }
     
     def _save_checkpoint(self, epoch: int, loss: float):
-        """保存检查点和最佳模型
+        """保存检查点
         
         Args:
             epoch: 当前轮数
-            loss: 当前损失
+            loss: 当前损失值
         """
-        # 确保输出目录存在
-        os.makedirs(self.config.output_dir, exist_ok=True)
-        os.makedirs(os.path.join(self.config.output_dir, 'checkpoints'), exist_ok=True)
-        
         # 获取模型配置
         if hasattr(self.model, 'config'):
-            model_config = self.model.config
+            # 将 ModelConfig 对象转换为字典
+            model_config = self.model.config.to_dict()
         else:
-            # 如果模型没有直接的配置属性，尝试从训练配置中提取模型相关参数
             model_config = {
                 'model_size': self.config.model_size,
                 'vocab_size': self.config.vocab_size,
@@ -312,40 +308,21 @@ class Trainer:
                 'nhead': self.config.nhead,
                 'num_layers': self.config.num_layers,
                 'dim_feedforward': self.config.dim_feedforward,
-                'dropout': self.config.dropout,
-                'attention_dropout': self.config.attention_dropout,
-                'hidden_dropout': self.config.hidden_dropout,
-                'layer_norm_eps': self.config.layer_norm_eps,
-                'max_seq_length': self.config.max_length,
-                'pad_token_id': self.config.pad_token_id,
-                'bos_token_id': self.config.bos_token_id,
-                'eos_token_id': self.config.eos_token_id,
+                'dropout': self.config.dropout
             }
         
-        # 准备检查点数据
+        # 保存检查点
         checkpoint = {
             'epoch': epoch,
             'model_state_dict': self.model.state_dict(),
             'optimizer_state_dict': self.optimizer.state_dict(),
-            'scheduler_state_dict': self.scheduler.state_dict(),
+            'scheduler_state_dict': self.scheduler.state_dict() if self.scheduler else None,
             'loss': loss,
-            'config': model_config,  # 只保存模型相关的配置
-            'best_loss': self.best_loss,
-            'training_config': {  # 单独保存训练配置
-                'learning_rate': self.config.learning_rate,
-                'num_epochs': self.config.num_epochs,
-                'batch_size': self.config.batch_size,
-                'warmup_steps': self.config.warmup_steps,
-                'weight_decay': self.config.weight_decay,
-                'max_grad_norm': self.config.max_grad_norm,
-                'gradient_accumulation_steps': self.config.gradient_accumulation_steps,
-                'scheduler': self.config.scheduler,
-                'device': self.config.device,
-                'fp16': self.config.fp16
-            }
+            'config': model_config,  # 使用字典形式的配置
+            'best_loss': self.best_loss
         }
         
-        # 保存当前检查点
+        # 保存当前轮次的检查点
         checkpoint_path = os.path.join(
             self.config.output_dir,
             'checkpoints',
@@ -354,16 +331,9 @@ class Trainer:
         torch.save(checkpoint, checkpoint_path)
         print(f"\nSaved checkpoint: {checkpoint_path}")
         
-        # 如果是最佳模型，保存到 best_model.pt
-        if loss <= self.best_loss:
+        # 如果是最佳模型，单独保存
+        if loss < self.best_loss:
+            self.best_loss = loss
             best_model_path = os.path.join(self.config.output_dir, 'best_model.pt')
             torch.save(checkpoint, best_model_path)
-            print(f"New best model saved: {best_model_path} (loss: {loss:.4f})")
-            
-            # 更新最佳损失
-            self.best_loss = loss
-            
-            # 保存模型配置
-            config_path = os.path.join(self.config.output_dir, 'model_config.json')
-            with open(config_path, 'w', encoding='utf-8') as f:
-                json.dump(model_config, f, indent=2, ensure_ascii=False) 
+            print(f"New best model saved: {best_model_path} (loss: {loss:.4f})") 
