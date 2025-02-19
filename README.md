@@ -1,61 +1,62 @@
-# Andy-LLM: 轻量级对话语言模型
+# Andy-LLM: 轻量级中文对话语言模型
 
-Andy-LLM 是一个基于 Transformer 架构的轻量级对话语言模型，专注于中文对话生成。本项目包含模型训练、数据处理和推理部署的完整流程。
+Andy-LLM 是一个基于 Transformer 架构的轻量级中文对话语言模型，专注于提供简单易用的训练和部署流程。
 
 ## 特性
 
 - 轻量级 Transformer 架构
-- 支持上下文对话
-- 混合精度训练
-- 量化推理
+- 支持三种规模配置：tiny(5M)、small(20M)、medium(100M)
+- 混合精度训练和量化推理
+- 增量式对话生成
 - 支持 CPU/GPU/MPS 设备
-- 对话数据格式处理
-- 增量式推理
-
-## 优化策略
-
-### 1. 数据质量优化
-- 过滤过短文本（少于50字符）
-- 过滤重复内容（少于2个句号的文本）
-- 过滤广告等垃圾文本
-- 支持多数据源混合（新闻、维基百科、问答）
-
-### 2. 训练优化
-- 混合精度训练 (FP16)
-- 梯度累积
-- 多种学习率调度策略
-- 早停机制
-- 详细的评估指标
-
-### 3. 推理优化
-- KV缓存
-- 重复惩罚
-- 长度惩罚
-- 支持多种采样策略
+- 完整的训练部署流程
 
 ## 项目结构
 
 ```
 andy-llm/
-├── src/
-│   ├── data/           # 数据处理
-│   ├── model/          # 模型定义
-│   ├── training/       # 训练相关
-│   └── utils/          # 工具函数
-├── scripts/            # 脚本文件
-├── tests/              # 测试文件
-├── configs/            # 配置文件
-├── data/               # 数据目录
-│   ├── raw/           # 原始数据
-│   └── processed/     # 处理后数据
-└── outputs/            # 输出目录
+├── src/                      # 核心源代码
+│   ├── data/                # 数据处理相关
+│   │   ├── dataset.py       # 数据集实现
+│   │   ├── format.py        # 数据格式化
+│   │   └── dataset_config.py # 数据集配置
+│   ├── model/               # 模型相关
+│   │   ├── transformer.py   # Transformer实现
+│   │   └── config.py        # 模型配置
+│   ├── training/            # 训练相关
+│   │   ├── trainer.py       # 训练器
+│   │   ├── config.py        # 训练配置
+│   │   └── early_stopping.py # 早停机制
+│   └── tokenizer.py         # 分词器实现
+│
+├── scripts/                  # 命令行脚本
+│   ├── data/                # 数据处理脚本
+│   │   ├── download_data.py  # 下载数据
+│   │   └── preprocess_data.py # 数据预处理
+│   ├── train/               # 训练相关脚本
+│   │   ├── train.py         # 训练入口
+│   │   └── quantize.py      # 模型量化
+│   └── serve/               # 服务部署脚本
+│       ├── serve_model.py    # 原生服务
+│       ├── serve_vllm.py     # vLLM服务
+│       └── test_vllm.py      # 服务测试
+│
+├── configs/                  # 配置文件
+│   └── model/               # 模型配置
+│       ├── tiny.json
+│       ├── small.json
+│       └── medium.json
 ```
 
 ## 快速开始
 
-### 1. 环境配置
+### 1. 安装
 
 ```bash
+# 克隆项目
+git clone https://github.com/DWG-ShowMaker/andy-llm.git
+cd andy-llm
+
 # 创建虚拟环境
 python -m venv andyllm
 source andyllm/bin/activate  # Linux/Mac
@@ -63,155 +64,121 @@ source andyllm/bin/activate  # Linux/Mac
 .\andyllm\Scripts\activate  # Windows
 
 # 安装依赖
-pip install -e ".[train]"
+pip install -e ".[train]"  # 安装训练依赖
+# 或
+pip install -e "."         # 仅安装推理依赖
 ```
 
 ### 2. 数据准备
 
 ```bash
-# 下载数据集
-python scripts/download_data.py --datasets muice --output_dir data/raw
+# 下载示例数据集
+python scripts/data/download_data.py \
+    --datasets muice \
+    --output_dir data/raw
 
-# 训练分词器
-python scripts/train_tokenizer.py \
-    --input_file data/raw/muice_train.jsonl \
-    --model_prefix data/processed/tokenizer \
+# 数据预处理
+python scripts/data/preprocess_data.py \
+    --input_dir data/raw \
+    --output_dir data/processed \
     --vocab_size 32000
 ```
 
 ### 3. 模型训练
 
 ```bash
-# 使用 GPU 训练
-python scripts/train.py \
-    --device cuda \
-    --batch_size 8 \
-    --num_epochs 3 \
-    --learning_rate 1e-4 \
+# 使用默认配置训练
+python scripts/train/train.py \
+    --model_size small \
+    --train_file data/processed/train.jsonl \
+    --val_file data/processed/validation.jsonl \
+    --tokenizer_path data/processed/tokenizer.model \
     --output_dir outputs/my_model
 
-# 使用 CPU 训练
-python scripts/train.py --device cpu
-```
-
-### 4. 模型推理
-
-```bash
-# 交互式对话
-python scripts/chat.py \
-    --model_path outputs/my_model \
+# 自定义训练参数
+python scripts/train/train.py \
+    --model_size medium \
+    --batch_size 16 \
+    --learning_rate 2e-4 \
+    --num_epochs 5 \
+    --fp16 \
     --device cuda
-
-# API 服务
-python scripts/serve.py --port 8000
 ```
 
-## 训练配置
-
-主要的训练参数：
-
-```python
-# 模型配置
-vocab_size: int = 32000    # 词表大小
-d_model: int = 512        # 隐藏层维度
-nhead: int = 8           # 注意力头数
-num_layers: int = 6      # Transformer层数
-dim_feedforward: int = 2048  # 前馈网络维度
-max_seq_length: int = 512    # 最大序列长度
-dropout: float = 0.1     # Dropout比率
-
-# 训练配置
-batch_size: int = 8      # 批次大小
-learning_rate: float = 1e-4  # 学习率
-num_epochs: int = 3      # 训练轮数
-warmup_steps: int = 100  # 预热步数
-weight_decay: float = 0.01  # 权重衰减
-max_grad_norm: float = 1.0  # 梯度裁剪
-fp16: bool = True        # 混合精度训练
-```
-
-## API 使用
-
-```python
-from src.model import MiniLLM
-from src.utils import Tokenizer
-
-# 加载模型
-model = MiniLLM.from_pretrained('outputs/my_model')
-tokenizer = Tokenizer.from_pretrained('data/processed/tokenizer.model')
-
-# 对话
-response = model.chat(
-    tokenizer=tokenizer,
-    messages=[
-        {"role": "user", "content": "你好，请介绍一下自己。"}
-    ],
-    max_length=512,
-    temperature=0.7
-)
-print(response)
-```
-
-## 部署
-
-### Docker 部署
+### 4. 模型量化
 
 ```bash
-# 构建镜像
-docker build -t andy-llm .
+# 动态量化
+python scripts/train/quantize.py \
+    --model_path outputs/best_model.pt \
+    --output_path outputs/quantized.pt \
+    --quantization_type dynamic \
+    --tokenizer_path data/processed/tokenizer.model
 
-# 运行容器
-docker run -d \
-    -p 8000:8000 \
-    -v /path/to/model:/app/model \
-    andy-llm
+# 静态量化
+python scripts/train/quantize.py \
+    --model_path outputs/best_model.pt \
+    --output_path outputs/quantized_static.pt \
+    --quantization_type static \
+    --tokenizer_path data/processed/tokenizer.model
 ```
 
-### 本地部署
+### 5. 推理服务
 
 ```bash
-# 安装生产环境依赖
-pip install -e ".[serve]"
-
 # 启动服务
-python scripts/serve.py \
-    --model_path outputs/my_model \
+python scripts/serve/serve_model.py \
+    --model outputs/quantized.pt \
+    --tokenizer_path data/processed/tokenizer.model \
+    --device cuda \
     --port 8000
+
+# 测试服务
+curl -X POST http://localhost:8000/generate \
+    -H "Content-Type: application/json" \
+    -d '{"prompt": "你好，请介绍一下自己。", "temperature": 0.7}'
 ```
+
+## 模型规格
+
+| 参数 | Tiny | Small | Medium |
+|------|------|--------|---------|
+| 词表大小 | 10,000 | 30,000 | 50,000 |
+| 隐藏维度 | 128 | 256 | 512 |
+| 注意力头数 | 2 | 4 | 8 |
+| 层数 | 2 | 4 | 6 |
+| 参数量 | ~5M | ~20M | ~100M |
+| 最小显存 | 2GB | 4GB | 8GB |
 
 ## 性能优化
 
-1. 量化
-```python
-# INT8 量化
-model.quantize(quantization_type='dynamic')
+1. 训练优化
+```bash
+# 混合精度训练
+python scripts/train/train.py --fp16
+
+# 梯度累积
+python scripts/train/train.py --gradient_accumulation_steps 4
+
+# 使用 Cosine 学习率调度
+python scripts/train/train.py --scheduler cosine
 ```
 
-2. KV 缓存
-```python
+2. 推理优化
+```bash
+# 量化推理
+python scripts/serve/serve_model.py --quantize int8
+
+# 批处理推理
+python scripts/serve/serve_model.py --batch_size 32
+
 # 启用 KV 缓存
-model.enable_kv_cache()
+python scripts/serve/serve_model.py --enable_cache
 ```
-
-3. 批处理推理
-```python
-responses = model.batch_generate(
-    prompts,
-    batch_size=4
-)
-```
-
-## 贡献指南
-
-1. Fork 本仓库
-2. 创建特性分支 (`git checkout -b feature/AmazingFeature`)
-3. 提交更改 (`git commit -m 'Add some AmazingFeature'`)
-4. 推送到分支 (`git push origin feature/AmazingFeature`)
-5. 打开 Pull Request
 
 ## 许可证
 
-本项目采用 MIT 许可证。详见 [LICENSE](LICENSE) 文件。
+本项目采用 [MIT 许可证](LICENSE)。
 
 ## 引用
 
@@ -219,9 +186,9 @@ responses = model.batch_generate(
 
 ```bibtex
 @software{andy_llm,
-    title = {Andy-LLM: Lightweight Dialogue Language Model},
-    author = {Your Name},
+    title = {Andy-LLM: Lightweight Chinese Dialogue Language Model},
+    author = {Boss Andy},
     year = {2024},
-    url = {https://github.com/yourusername/andy-llm}
+    url = {https://github.com/DWG-ShowMaker/andy-llm}
 }
 ```

@@ -8,15 +8,18 @@ from src.data.dataset import TextDataset, create_dataloader, ChatDataset
 from src.training.trainer import Trainer
 import wandb
 from torch.utils.data import DataLoader
+import json
+from src.tokenizer import Tokenizer
 
 def parse_args():
     parser = argparse.ArgumentParser()
     # 数据相关参数
-    parser.add_argument('--train_file', type=str, default='data/raw/muice_train.jsonl',
+    parser.add_argument('--train_file', type=str, default='data/processed/train.jsonl',
                       help='训练数据文件路径')
-    parser.add_argument('--val_file', type=str, default='data/raw/muice_test.jsonl',
+    parser.add_argument('--val_file', type=str, default='data/processed/test.jsonl',
                       help='验证数据文件路径')
-    parser.add_argument('--tokenizer_path', type=str, default='data/processed/tokenizer.model')
+    parser.add_argument('--tokenizer_path', type=str, default='data/processed/tokenizer.model',
+                      help='分词器路径')
     
     # 模型相关参数
     parser.add_argument('--model_size', type=str, default='small')
@@ -61,88 +64,83 @@ def parse_args():
     return parser.parse_args()
 
 def main():
-    # 1. 解析参数
     args = parse_args()
     
-    # 2. 检查数据文件是否存在
-    for file_path in [args.train_file, args.val_file]:
-        if not os.path.exists(file_path):
-            raise FileNotFoundError(f"找不到数据文件: {file_path}")
+    # 设置设备
+    device = torch.device(args.device)
     
-    # 3. 创建输出目录
-    os.makedirs(args.output_dir, exist_ok=True)
-    
-    # 4. 加载分词器
+    # 加载分词器
     tokenizer = spm.SentencePieceProcessor()
     if not os.path.exists(args.tokenizer_path):
         raise FileNotFoundError(f"找不到分词器文件: {args.tokenizer_path}")
     tokenizer.load(args.tokenizer_path)
     
-    # 5. 创建数据集和数据加载器
+    # 加载数据
+    print("加载数据...")
+    train_data = []
+    with open(args.train_file, 'r', encoding='utf-8') as f:
+        for line in f:
+            train_data.append(json.loads(line))
+            
+    val_data = []
+    with open(args.val_file, 'r', encoding='utf-8') as f:
+        for line in f:
+            val_data.append(json.loads(line))
+    
+    # 创建数据集
     train_dataset = TextDataset(
-        file_path=args.train_file,
+        data=train_data,
         tokenizer=tokenizer,
         max_length=args.max_length
     )
     
     val_dataset = TextDataset(
-        file_path=args.val_file,
+        data=val_data,
         tokenizer=tokenizer,
         max_length=args.max_length
     )
     
-    train_dataloader = DataLoader(
+    # 创建数据加载器
+    train_dataloader = create_dataloader(
         train_dataset,
         batch_size=args.batch_size,
-        shuffle=True,
-        num_workers=4,
-        pin_memory=True
+        shuffle=True
     )
     
-    val_dataloader = DataLoader(
+    val_dataloader = create_dataloader(
         val_dataset,
         batch_size=args.batch_size,
-        shuffle=False,
-        num_workers=4,
-        pin_memory=True
+        shuffle=False
     )
     
-    # 6. 计算总训练步数
-    args.num_training_steps = (
-        len(train_dataloader) 
-        * args.num_epochs 
-        // args.gradient_accumulation_steps
-    )
+    # 加载模型配置
+    model_config = ModelConfig.from_pretrained(args.model_size)
+    model_config.vocab_size = tokenizer.get_piece_size()
     
-    # 7. 创建模型配置
-    model_config = ModelConfig(
-        vocab_size=tokenizer.get_piece_size(),  # 使用分词器的词表大小
-        d_model=512,
-        nhead=8,
-        num_layers=6,
-        dim_feedforward=2048,
-        max_seq_length=args.max_length,
-        dropout=0.1
-    )
+    # 创建模型
+    model = MiniLLM(model_config)
+    model = model.to(device)
     
-    # 8. 创建训练配置
+    # 创建训练配置
     training_config = TrainingConfig(
-        device=args.device,
         learning_rate=args.learning_rate,
         num_epochs=args.num_epochs,
+        batch_size=args.batch_size,
+        max_length=args.max_length,
+        warmup_steps=args.warmup_steps,
+        weight_decay=args.weight_decay,
+        max_grad_norm=args.max_grad_norm,
+        gradient_accumulation_steps=args.gradient_accumulation_steps,
+        scheduler=args.scheduler,
+        device=args.device,
+        fp16=args.fp16,
         output_dir=args.output_dir,
-        fp16=args.device == 'cuda',  # 在 GPU 上启用混合精度训练
-        max_grad_norm=1.0,
-        weight_decay=0.01,
-        warmup_steps=100,
-        scheduler='cosine',
-        num_training_steps=len(train_dataloader) * args.num_epochs
+        save_every=args.save_every,
+        patience=args.patience,
+        min_delta=args.min_delta
     )
     
-    # 9. 创建模型
-    model = MiniLLM(model_config)
-    
-    # 10. 创建训练器并开始训练
+    # 创建训练器
     trainer = Trainer(
         model=model,
         train_dataloader=train_dataloader,
@@ -150,7 +148,7 @@ def main():
         config=training_config
     )
     
-    # 初始化wandb
+    # 初始化 wandb
     wandb.init(project="andy-llm", config=args)
     
     # 开始训练

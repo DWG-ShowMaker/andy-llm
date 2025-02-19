@@ -24,9 +24,7 @@ wheels/
 andyllm/
 venv/
 ENV/
-env/
-.env/
-vllm_model/
+
 # IDE
 .idea/
 .vscode/
@@ -39,8 +37,12 @@ data/raw/*
 data/processed/*
 !data/raw/.gitkeep
 !data/processed/.gitkeep
-checkpoints/*
-!checkpoints/.gitkeep
+outputs/checkpoints/*
+outputs/logs/*
+outputs/tensorboard/*
+!outputs/checkpoints/.gitkeep
+!outputs/logs/.gitkeep
+!outputs/tensorboard/.gitkeep
 wandb/
 *.pt
 *.bin
@@ -48,5 +50,4 @@ wandb/
 *.vocab
 
 # Logs
-logs/
 *.log 

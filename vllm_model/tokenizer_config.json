@@ -1,0 +1,8 @@
+{
+  "model_type": "gpt2",
+  "pad_token": "<pad>",
+  "bos_token": "<s>",
+  "eos_token": "</s>",
+  "unk_token": "<unk>",
+  "tokenizer_class": "PreTrainedTokenizer"
+}

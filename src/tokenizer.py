@@ -1,3 +1,4 @@
+import os
 import sentencepiece as spm
 from typing import List, Optional
 
@@ -19,6 +20,52 @@ class Tokenizer:
         
         # 词表大小
         self.vocab_size = self.sp.get_piece_size()
+    
+    @classmethod
+    def train(cls, texts: List[str], vocab_size: int, model_path: str) -> 'Tokenizer':
+        """训练分词器
+        
+        Args:
+            texts: 训练文本列表
+            vocab_size: 词表大小
+            model_path: 模型保存路径
+            
+        Returns:
+            训练好的分词器
+        """
+        # 准备训练数据
+        data_path = f"{model_path}.txt"
+        with open(data_path, 'w', encoding='utf-8') as f:
+            for text in texts:
+                f.write(text + '\n')
+        
+        # 训练参数
+        train_args = [
+            f'--input={data_path}',
+            f'--model_prefix={model_path}',
+            f'--vocab_size={vocab_size}',
+            '--character_coverage=0.9995',
+            '--model_type=bpe',
+            '--pad_id=0',
+            '--unk_id=1',
+            '--bos_id=2',
+            '--eos_id=3',
+            '--pad_piece=<pad>',
+            '--unk_piece=<unk>',
+            '--bos_piece=<s>',
+            '--eos_piece=</s>',
+            '--user_defined_symbols=<system>,</system>,<human>,</human>,<assistant>,</assistant>'
+        ]
+        
+        # 训练分词器
+        spm.SentencePieceTrainer.train(' '.join(train_args))
+        
+        # 清理临时文件
+        if os.path.exists(data_path):
+            os.remove(data_path)
+        
+        # 返回训练好的分词器
+        return cls(f"{model_path}.model")
     
     @classmethod
     def load(cls, model_path: str) -> 'Tokenizer':

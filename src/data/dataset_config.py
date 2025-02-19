@@ -3,13 +3,13 @@ from typing import List, Optional
 
 @dataclass
 class DatasetConfig:
-    # 必需参数（没有默认值）
+    # 必需参数
     name: str
-    source: str  # 'huggingface' 或 'modelscope'
+    source: str  # 'modelscope'
     path: str
     text_column: str
     
-    # 可选参数（有默认值）
+    # 可选参数
     subset: Optional[str] = None
     min_length: int = 50
     max_length: int = 512
@@ -23,7 +23,7 @@ DATASET_CONFIGS = {
         source="modelscope",
         path="Moemuu/Muice-Dataset",
         subset="default",
-        text_column="conversation",  # 修改为正确的列名
+        text_column="conversation",
         min_length=10,
         filter_rules=["对话格式化"]
     ),

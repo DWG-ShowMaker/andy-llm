@@ -16,7 +16,7 @@ def parse_args():
 
 def download_from_modelscope(config, output_dir):
     """从 ModelScope 下载数据集"""
-    print(f"正在下载 {config.name} 数据集...")
+    print(f"正在下载数据集...")
     
     # 使用 MsDataset 下载数据集
     dataset = MsDataset.load(
@@ -40,21 +40,15 @@ def download_from_modelscope(config, output_dir):
             )
             
             # 转换为列表并保存
-            output_file = os.path.join(output_dir, f"{config.name}_{split}.jsonl")
+            output_file = os.path.join(output_dir, f"{split}.jsonl")
             with open(output_file, 'w', encoding='utf-8') as f:
                 for item in split_data:
                     # 处理对话格式
-                    if config.name == "muice":
-                        # 直接使用原始数据
-                        dialogue = {
-                            "system": item["system"],
-                            "conversation": item["conversation"]  # 已经是 JSON 字符串
-                        }
-                        f.write(f"{json.dumps(dialogue, ensure_ascii=False)}\n")
-                    else:
-                        # 其他数据集保持原有格式
-                        if config.text_column in item:
-                            f.write(f"{json.dumps({'text': item[config.text_column]}, ensure_ascii=False)}\n")
+                    dialogue = {
+                        "system": item["system"],
+                        "conversation": item["conversation"]  # 已经是 JSON 字符串
+                    }
+                    f.write(f"{json.dumps(dialogue, ensure_ascii=False)}\n")
             
             print(f"- 已保存 {split} 数据到: {output_file}")
         except Exception as e:
@@ -66,23 +60,13 @@ def main():
     args = parse_args()
     os.makedirs(args.output_dir, exist_ok=True)
     
-    for dataset_name in args.datasets:
-        if dataset_name not in DATASET_CONFIGS:
-            print(f"警告: 未知的数据集 {dataset_name}")
-            continue
-            
-        config = DATASET_CONFIGS[dataset_name]
-        
-        try:
-            if config.source == 'modelscope':
-                dataset = download_from_modelscope(config, args.output_dir)
-                print(f"成功下载 {dataset_name} 数据集")
-            else:
-                print(f"警告: 暂不支持的数据源 {config.source}")
-                continue
-                
-        except Exception as e:
-            print(f"下载 {dataset_name} 数据集时出错: {str(e)}")
+    config = DATASET_CONFIGS["muice"]  # 只使用 muice 数据集
+    
+    try:
+        dataset = download_from_modelscope(config, args.output_dir)
+        print(f"成功下载数据集")
+    except Exception as e:
+        print(f"下载数据集时出错: {str(e)}")
 
 if __name__ == "__main__":
     main() 

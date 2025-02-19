@@ -17,27 +17,23 @@ class PositionalEncoding(nn.Module):
             max_seq_length: 最大序列长度
         """
         super().__init__()
-        # 生成位置矩阵 [max_seq_length, 1]
-        position = torch.arange(max_seq_length).unsqueeze(1)
-        # 生成分母项
-        div_term = torch.exp(torch.arange(0, d_model, 2) * (-math.log(10000.0) / d_model))
+        
         # 创建位置编码矩阵
-        pe = torch.zeros(max_seq_length, 1, d_model)
-        # 使用正弦函数编码偶数维度
-        pe[:, 0, 0::2] = torch.sin(position * div_term)
-        # 使用余弦函数编码奇数维度
-        pe[:, 0, 1::2] = torch.cos(position * div_term)
-        # 将位置编码注册为缓冲区（不参与训练）
+        position = torch.arange(max_seq_length).unsqueeze(1)
+        div_term = torch.exp(torch.arange(0, d_model, 2) * (-math.log(10000.0) / d_model))
+        pe = torch.zeros(max_seq_length, d_model)
+        pe[:, 0::2] = torch.sin(position * div_term)
+        pe[:, 1::2] = torch.cos(position * div_term)
+        
+        # 注册为缓冲区，这样它就会被保存到状态字典中
         self.register_buffer('pe', pe)
-
+        
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
-        参数:
-            x: 输入张量 [seq_len, batch_size, embedding_dim]
-        返回:
-            添加了位置编码的张量
+        Args:
+            x: [batch_size, seq_length, d_model]
         """
-        return x + self.pe[:x.size(0)]
+        return x + self.pe[:x.size(1)]
 
 class MiniLLM(nn.Module):
     """小型语言模型的主体架构
@@ -59,31 +55,43 @@ class MiniLLM(nn.Module):
         # 设置设备
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'mps' if torch.backends.mps.is_available() else 'cpu')
         
-        # Token嵌入层：将输入的token ID转换为向量表示
-        self.token_embedding = nn.Embedding(config.vocab_size, config.d_model)
-        # 位置编码层：添加位置信息
-        self.pos_encoder = PositionalEncoding(config.d_model, config.max_seq_length)
-        
-        # 构建Transformer编码器层
-        encoder_layers = nn.TransformerEncoderLayer(
-            d_model=config.d_model,  # 隐藏维度
-            nhead=config.nhead,      # 注意力头数
-            dim_feedforward=config.dim_feedforward,  # 前馈网络维度
-            dropout=config.dropout,   # Dropout比率
-            batch_first=True,        # 输入张量的batch维度在前
-            norm_first=True          # 使用Pre-LN结构，提高训练稳定性
+        # Token嵌入层
+        self.token_embedding = nn.Embedding(
+            config.vocab_size, 
+            config.d_model,
+            padding_idx=config.pad_token_id
         )
         
-        # 堆叠多层Transformer编码器
+        # 位置编码层
+        self.pos_encoder = PositionalEncoding(
+            config.d_model,
+            config.max_seq_length
+        )
+        
+        # Transformer编码器
+        encoder_layer = nn.TransformerEncoderLayer(
+            d_model=config.d_model,
+            nhead=config.nhead,
+            dim_feedforward=config.dim_feedforward,
+            dropout=config.dropout,
+            activation='gelu',
+            batch_first=True,
+            norm_first=True
+        )
+        
         self.transformer = nn.TransformerEncoder(
-            encoder_layers,
+            encoder_layer,
             num_layers=config.num_layers
         )
         
-        # 输出层：将隐藏状态映射回词表大小
-        self.output_layer = nn.Linear(config.d_model, config.vocab_size)
+        # 输出层
+        self.output_layer = nn.Linear(
+            config.d_model,
+            config.vocab_size,
+            bias=True
+        )
         
-        # 初始化模型参数
+        # 初始化参数
         self._init_parameters()
         
         # KV缓存相关
@@ -121,57 +129,35 @@ class MiniLLM(nn.Module):
         self,
         input_ids: torch.Tensor,
         attention_mask: Optional[torch.Tensor] = None,
-        labels: Optional[torch.Tensor] = None,
-        use_cache: bool = False,
-        past_key_values: Optional[Tuple[torch.Tensor]] = None,
-    ) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
+        labels: Optional[torch.Tensor] = None
+    ) -> Dict[str, torch.Tensor]:
         """前向传播
         
-        参数:
+        Args:
             input_ids: 输入token的ID [batch_size, seq_len]
             attention_mask: 注意力掩码 [batch_size, seq_len]
             labels: 目标token的ID [batch_size, seq_len]
-            use_cache: 是否使用KV缓存
-            past_key_values: 上一轮对话的KV缓存
         """
-        # 确保输入张量在正确的设备上
-        device = next(self.parameters()).device
-        input_ids = input_ids.to(device)
-        if attention_mask is not None:
-            attention_mask = attention_mask.to(device)
-        
         # 1. 嵌入层
-        x = self.token_embedding(input_ids) * math.sqrt(self.config.d_model)
+        x = self.token_embedding(input_ids)
+        x = x * math.sqrt(self.config.d_model)
         
         # 2. 位置编码
-        if past_key_values is None:
-            # 首次对话，使用完整的位置编码
-            x = self.pos_encoder(x)
-        else:
-            # 延续对话，只对新输入添加位置编码
-            position_ids = torch.arange(
-                past_key_values[0][0].size(-2),
-                past_key_values[0][0].size(-2) + x.size(1),
-                dtype=torch.long,
-                device=x.device
-            )
-            x = x + self.pos_encoder.pe[position_ids]
+        x = self.pos_encoder(x)
         
         # 3. Transformer层
-        hidden_states = self.transformer(
-            x,
-            src_key_padding_mask=attention_mask == 0 if attention_mask is not None else None,
-            past_key_values=past_key_values,
-            use_cache=use_cache
-        )
+        if attention_mask is not None:
+            attention_mask = attention_mask.bool()
+            x = x * attention_mask.unsqueeze(-1)
+        
+        x = self.transformer(x)
         
         # 4. 输出层
-        logits = self.output_layer(hidden_states)
+        logits = self.output_layer(x)
         
         # 5. 计算损失
         loss = None
         if labels is not None:
-            # 使用 shift_logits 和 shift_labels 来计算损失
             shift_logits = logits[..., :-1, :].contiguous()
             shift_labels = labels[..., 1:].contiguous()
             loss = F.cross_entropy(
@@ -180,59 +166,46 @@ class MiniLLM(nn.Module):
                 ignore_index=-100
             )
         
-        return logits, loss
+        return {
+            'loss': loss,
+            'logits': logits
+        }
     
     def generate(
         self,
         input_ids: torch.Tensor,
-        attention_mask: Optional[torch.Tensor] = None,
-        max_length: int = 2048,
+        max_length: int = 100,
         temperature: float = 0.7,
         top_p: float = 0.9,
-        top_k: int = 50,
         repetition_penalty: float = 1.1,
-        do_sample: bool = True,
-        pad_token_id: int = 0,
-        eos_token_id: int = None,
-        past_key_values: Optional[Tuple[torch.Tensor]] = None,
+        eos_token_id: Optional[int] = None,
+        pad_token_id: Optional[int] = None
     ) -> torch.Tensor:
         """生成文本
         
-        参数:
-            input_ids: 输入token的ID [batch_size, seq_len]
-            attention_mask: 注意力掩码 [batch_size, seq_len]
+        Args:
+            input_ids: 输入序列 [batch_size, seq_len]
             max_length: 最大生成长度
             temperature: 采样温度
             top_p: 核采样的概率阈值
-            top_k: top-k采样的k值
             repetition_penalty: 重复惩罚系数
-            do_sample: 是否使用采样
-            pad_token_id: 填充token的ID
-            eos_token_id: 结束token的ID
-            past_key_values: 上一轮对话的KV缓存
+            eos_token_id: 结束符的token ID
+            pad_token_id: 填充符的token ID
         """
         batch_size = input_ids.shape[0]
-        cur_len = input_ids.shape[1]
-        
-        # 存储生成的序列
         generated_ids = input_ids
         
         # 生成文本
-        while cur_len < max_length:
-            outputs = self.forward(
+        for _ in range(max_length):
+            # 创建注意力掩码
+            attention_mask = torch.ones_like(generated_ids, dtype=torch.bool)
+            
+            # 获取下一个token的概率分布
+            outputs = self(
                 input_ids=generated_ids,
-                attention_mask=attention_mask,
-                use_cache=True,
-                past_key_values=past_key_values
+                attention_mask=attention_mask
             )
-            logits = outputs[0]
-            past_key_values = outputs[1] if len(outputs) > 1 else None
-            
-            # 获取最后一个时间步的logits
-            next_token_logits = logits[:, -1, :]
-            
-            # 应用温度
-            next_token_logits = next_token_logits / temperature
+            next_token_logits = outputs['logits'][:, -1, :] / temperature
             
             # 应用重复惩罚
             if repetition_penalty != 1.0:
@@ -240,40 +213,33 @@ class MiniLLM(nn.Module):
                     for token_id in set(generated_ids[i].tolist()):
                         next_token_logits[i, token_id] /= repetition_penalty
             
-            # 应用top-k采样
-            if top_k > 0:
-                indices_to_remove = next_token_logits < torch.topk(next_token_logits, top_k)[0][..., -1, None]
-                next_token_logits[indices_to_remove] = float('-inf')
-            
-            # 应用top-p采样
+            # 应用 top-p 采样
             if top_p < 1.0:
                 sorted_logits, sorted_indices = torch.sort(next_token_logits, descending=True)
-                cumulative_probs = torch.cumsum(F.softmax(sorted_logits, dim=-1), dim=-1)
+                cumulative_probs = torch.cumsum(torch.softmax(sorted_logits, dim=-1), dim=-1)
                 
                 # 移除概率累积超过阈值的token
                 sorted_indices_to_remove = cumulative_probs > top_p
                 sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[..., :-1].clone()
                 sorted_indices_to_remove[..., 0] = 0
                 
-                indices_to_remove = sorted_indices_to_remove.scatter(1, sorted_indices, sorted_indices_to_remove)
-                next_token_logits[indices_to_remove] = float('-inf')
+                for batch_idx in range(batch_size):
+                    indices_to_remove = sorted_indices[batch_idx][sorted_indices_to_remove[batch_idx]]
+                    next_token_logits[batch_idx, indices_to_remove] = float('-inf')
             
-            # 采样或贪婪解码
-            if do_sample:
-                probs = F.softmax(next_token_logits, dim=-1)
-                next_tokens = torch.multinomial(probs, num_samples=1)
-            else:
-                next_tokens = torch.argmax(next_token_logits, dim=-1, keepdim=True)
+            # 采样下一个token
+            probs = torch.softmax(next_token_logits, dim=-1)
+            next_token = torch.multinomial(probs, num_samples=1)
             
-            # 拼接新token
-            generated_ids = torch.cat([generated_ids, next_tokens], dim=1)
-            cur_len += 1
+            # 添加到生成序列
+            generated_ids = torch.cat([generated_ids, next_token], dim=1)
             
             # 检查是否生成了结束符
-            if (generated_ids == eos_token_id).any(dim=1).all():
-                break
+            if eos_token_id is not None:
+                if (generated_ids == eos_token_id).any(1).all().item():
+                    break
         
-        return generated_ids 
+        return generated_ids
 
     def quantize(self, quantization_type='dynamic'):
         """量化模型
