@@ -21,7 +21,8 @@ DATASET_CONFIGS = {
     "wiki": DatasetConfig(
         name="wiki",
         source="huggingface",
-        path="articles/wiki_zh",  # 更新为正确的路径
+        path="wikipedia",
+        subset="20220301.zh",
         text_column="text",
         min_length=100,
         filter_rules=["长度过滤", "质量过滤"]
@@ -31,7 +32,7 @@ DATASET_CONFIGS = {
     "belle": DatasetConfig(
         name="belle",
         source="huggingface",
-        path="BelleGroup/generated_chat_0.4M",  # 更新为可用的数据集
+        path="BelleGroup/school_math_0.25M",  # 数学问答数据集
         text_column="text",
         min_length=50,
         filter_rules=["对话格式化"]
@@ -41,7 +42,7 @@ DATASET_CONFIGS = {
     "alpaca": DatasetConfig(
         name="alpaca",
         source="huggingface",
-        path="shibing624/alpaca-zh",  # 更新为可用的数据集
+        path="yahma/alpaca-cleaned",  # 清洗后的Alpaca数据集
         text_column="text",
         min_length=50,
         filter_rules=["对话格式化"]
@@ -51,8 +52,8 @@ DATASET_CONFIGS = {
     "qa": DatasetConfig(
         name="qa",
         source="huggingface",
-        path="IDEA-CCNL/Ziya-Conv-Chinese",  # 更新为可用的数据集
-        text_column="text",
+        path="Hello-SimpleAI/HC3-Chinese",  # 中文问答数据集
+        text_column="human",
         min_length=50,
         filter_rules=["对话格式化"]
     ),
@@ -61,8 +62,8 @@ DATASET_CONFIGS = {
     "news": DatasetConfig(
         name="news",
         source="huggingface",
-        path="csebuetnlp/xlsum_chinese",  # 更新为可用的数据集
-        text_column="text",
+        path="MLXD/chinese-news-2023",  # 中文新闻数据集
+        text_column="content",
         min_length=100,
         filter_rules=["新闻格式化"]
     )
