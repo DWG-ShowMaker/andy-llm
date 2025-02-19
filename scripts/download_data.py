@@ -21,17 +21,19 @@ def download_from_modelscope(config, output_dir):
     # 使用 MsDataset 下载数据集
     dataset = MsDataset.load(
         config.path,
-        split='train',  # 默认使用训练集
+        subset_name=config.subset,
+        split='train',
         cache_dir=output_dir,
-        use_streaming=False  # 完整下载到本地
+        use_streaming=False
     )
     
     # 保存为本地文件
-    splits = ['train', 'validation', 'test']
+    splits = ['train', 'test']
     for split in splits:
         try:
             split_data = MsDataset.load(
                 config.path,
+                subset_name=config.subset,
                 split=split,
                 cache_dir=output_dir,
                 use_streaming=False
@@ -41,8 +43,18 @@ def download_from_modelscope(config, output_dir):
             output_file = os.path.join(output_dir, f"{config.name}_{split}.jsonl")
             with open(output_file, 'w', encoding='utf-8') as f:
                 for item in split_data:
-                    if config.text_column in item:
-                        f.write(f"{json.dumps({'text': item[config.text_column]}, ensure_ascii=False)}\n")
+                    # 处理对话格式
+                    if config.name == "muice":
+                        # 直接使用原始数据
+                        dialogue = {
+                            "system": item["system"],
+                            "conversation": item["conversation"]  # 已经是 JSON 字符串
+                        }
+                        f.write(f"{json.dumps(dialogue, ensure_ascii=False)}\n")
+                    else:
+                        # 其他数据集保持原有格式
+                        if config.text_column in item:
+                            f.write(f"{json.dumps({'text': item[config.text_column]}, ensure_ascii=False)}\n")
             
             print(f"- 已保存 {split} 数据到: {output_file}")
         except Exception as e:

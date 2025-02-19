@@ -17,11 +17,22 @@ class DatasetConfig:
 
 # 预定义数据集配置
 DATASET_CONFIGS = {
+    # Muice 对话数据集
+    "muice": DatasetConfig(
+        name="muice",
+        source="modelscope",
+        path="Moemuu/Muice-Dataset",
+        subset="default",
+        text_column="conversation",  # 修改为正确的列名
+        min_length=10,
+        filter_rules=["对话格式化"]
+    ),
+    
     # 通用百科数据
     "wiki": DatasetConfig(
         name="wiki",
         source="modelscope",
-        path="chinese-wikipedia-corpus",
+        path="damo/zh_wikipedia_text",
         text_column="text",
         min_length=100,
         filter_rules=["长度过滤", "质量过滤"]
@@ -31,7 +42,7 @@ DATASET_CONFIGS = {
     "csl": DatasetConfig(
         name="csl",
         source="modelscope",
-        path="chinese-scientific-literature",
+        path="damo/zh_csl",
         text_column="text",
         min_length=100,
         filter_rules=["学术格式化"]
@@ -51,7 +62,7 @@ DATASET_CONFIGS = {
     "news": DatasetConfig(
         name="news",
         source="modelscope",
-        path="chinese-news-corpus",
+        path="damo/zh_news",
         text_column="content",
         min_length=100,
         filter_rules=["新闻格式化"]
@@ -61,9 +72,19 @@ DATASET_CONFIGS = {
     "dialogue": DatasetConfig(
         name="dialogue",
         source="modelscope",
-        path="chinese-dialog-corpus",
+        path="damo/zh_dialogs",
         text_column="text",
         min_length=50,
         filter_rules=["对话格式化"]
+    ),
+
+    # 通用文本
+    "text": DatasetConfig(
+        name="text",
+        source="modelscope",
+        path="damo/zh_txt",
+        text_column="text",
+        min_length=50,
+        filter_rules=["长度过滤"]
     )
 } 

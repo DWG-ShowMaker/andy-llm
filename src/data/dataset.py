@@ -6,60 +6,50 @@ import random
 import json
 
 class TextDataset(Dataset):
-    def __init__(
-        self,
-        file_path: str,
-        tokenizer: spm.SentencePieceProcessor,
-        max_length: int = 512,
-        min_length: int = 10
-    ):
+    def __init__(self, file_path: str, tokenizer: Any, max_length: int = 512):
+        """初始化数据集
+        
+        参数:
+            file_path: 数据文件路径
+            tokenizer: 分词器
+            max_length: 最大序列长度
+        """
+        self.file_path = file_path
         self.tokenizer = tokenizer
         self.max_length = max_length
-        self.min_length = min_length
+        self.data = []
         
-        # 读取jsonl数据
-        self.examples = []
+        # 加载数据
         with open(file_path, 'r', encoding='utf-8') as f:
             for line in f:
                 item = json.loads(line)
-                if len(item['text'].strip()) >= min_length:
-                    self.examples.append(item)
+                # 处理对话格式
+                system = item['system']
+                conversation = json.loads(item['conversation'])
+                
+                # 构建对话文本
+                text = f"<system>{system}</system>\n"
+                for msg in conversation:
+                    if 'human' in msg:
+                        text += f"<human>{msg['human']}</human>\n"
+                    if 'assistant' in msg:
+                        text += f"<assistant>{msg['assistant']}</assistant>\n"
+                
+                # 编码文本
+                encoded = self.tokenizer.encode_as_ids(text)
+                if len(encoded) > self.max_length:
+                    encoded = encoded[:self.max_length]
+                
+                self.data.append({
+                    'input_ids': encoded,
+                    'attention_mask': [1] * len(encoded)
+                })
     
-    def __len__(self) -> int:
-        return len(self.examples)
+    def __len__(self):
+        return len(self.data)
     
-    def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
-        item = self.examples[idx]
-        text = item['text']
-        
-        # 编码文本
-        input_ids = self.tokenizer.encode(text)
-        
-        # 截断或填充到指定长度
-        if len(input_ids) > self.max_length:
-            input_ids = input_ids[:self.max_length]
-            padding_length = 0
-        else:
-            padding_length = self.max_length - len(input_ids)
-            input_ids = input_ids + [0] * padding_length
-        
-        # 创建attention mask
-        attention_mask = [1] * (self.max_length - padding_length) + [0] * padding_length
-        
-        # 转换为tensor
-        input_ids = torch.tensor(input_ids, dtype=torch.long)
-        attention_mask = torch.tensor(attention_mask, dtype=torch.long)
-        
-        # 创建标签
-        labels = input_ids.clone()
-        labels[attention_mask == 0] = -100
-        
-        return {
-            'input_ids': input_ids,
-            'attention_mask': attention_mask,
-            'labels': labels,
-            'metadata': item.get('metadata', {})  # 保留元信息
-        }
+    def __getitem__(self, idx):
+        return self.data[idx]
 
 def create_dataloader(
     dataset: TextDataset,

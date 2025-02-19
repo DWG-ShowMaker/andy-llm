@@ -2,7 +2,7 @@ import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Optional, Tuple, Union
+from typing import Optional, Tuple, Union, List, Dict
 
 class PositionalEncoding(nn.Module):
     """位置编码模块
@@ -112,12 +112,18 @@ class MiniLLM(nn.Module):
         self.cached_states = None
         self.cached_length = 0
     
+    def to(self, device):
+        """将模型移动到指定设备"""
+        super().to(device)
+        return self
+    
     def forward(
         self,
         input_ids: torch.Tensor,
         attention_mask: Optional[torch.Tensor] = None,
         labels: Optional[torch.Tensor] = None,
-        use_cache: bool = False
+        use_cache: bool = False,
+        past_key_values: Optional[Tuple[torch.Tensor]] = None,
     ) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
         """前向传播
         
@@ -126,64 +132,52 @@ class MiniLLM(nn.Module):
             attention_mask: 注意力掩码 [batch_size, seq_len]
             labels: 目标token的ID [batch_size, seq_len]
             use_cache: 是否使用KV缓存
+            past_key_values: 上一轮对话的KV缓存
         """
+        # 确保输入张量在正确的设备上
+        device = next(self.parameters()).device
+        input_ids = input_ids.to(device)
+        if attention_mask is not None:
+            attention_mask = attention_mask.to(device)
+        
         # 1. 嵌入层
         x = self.token_embedding(input_ids) * math.sqrt(self.config.d_model)
         
-        # 2. 处理缓存和位置编码
-        if self.enable_cache and use_cache:
-            if self.cached_states is None:
-                # 首次运行，添加位置编码
-                x = self.pos_encoder(x)
-                self.cached_length = x.size(1)
-            else:
-                # 使用缓存时，只对新token添加位置编码
-                new_tokens = x[:, -1:, :]
-                position_ids = torch.arange(
-                    self.cached_length,
-                    self.cached_length + 1,
-                    dtype=torch.long,
-                    device=x.device
-                )
-                new_tokens = new_tokens + self.pos_encoder.pe[position_ids]
-                x = new_tokens
-                self.cached_length += 1
-        else:
+        # 2. 位置编码
+        if past_key_values is None:
+            # 首次对话，使用完整的位置编码
             x = self.pos_encoder(x)
-        
-        # 3. 处理注意力掩码
-        if attention_mask is not None:
-            key_padding_mask = (attention_mask == 0)
         else:
-            key_padding_mask = None
+            # 延续对话，只对新输入添加位置编码
+            position_ids = torch.arange(
+                past_key_values[0][0].size(-2),
+                past_key_values[0][0].size(-2) + x.size(1),
+                dtype=torch.long,
+                device=x.device
+            )
+            x = x + self.pos_encoder.pe[position_ids]
         
-        # 4. Transformer层
-        if self.enable_cache and use_cache:
-            if self.cached_states is None:
-                # 首次运行，生成并存储状态
-                hidden_states = self.transformer(x, src_key_padding_mask=key_padding_mask)
-                self.cached_states = hidden_states
-            else:
-                # 使用缓存的状态
-                new_hidden_states = self.transformer(x, src_key_padding_mask=key_padding_mask)
-                self.cached_states = torch.cat([self.cached_states, new_hidden_states], dim=1)
-                hidden_states = self.cached_states
-        else:
-            hidden_states = self.transformer(x, src_key_padding_mask=key_padding_mask)
+        # 3. Transformer层
+        hidden_states = self.transformer(
+            x,
+            src_key_padding_mask=attention_mask == 0 if attention_mask is not None else None,
+            past_key_values=past_key_values,
+            use_cache=use_cache
+        )
         
-        # 5. 输出层
+        # 4. 输出层
         logits = self.output_layer(hidden_states)
         
-        # 6. 计算损失
+        # 5. 计算损失
         loss = None
         if labels is not None:
+            # 使用 shift_logits 和 shift_labels 来计算损失
             shift_logits = logits[..., :-1, :].contiguous()
             shift_labels = labels[..., 1:].contiguous()
             loss = F.cross_entropy(
                 shift_logits.view(-1, self.config.vocab_size),
                 shift_labels.view(-1),
-                ignore_index=-100,
-                reduction='mean'
+                ignore_index=-100
             )
         
         return logits, loss
@@ -191,16 +185,32 @@ class MiniLLM(nn.Module):
     def generate(
         self,
         input_ids: torch.Tensor,
-        max_length: int = 100,
+        attention_mask: Optional[torch.Tensor] = None,
+        max_length: int = 2048,
         temperature: float = 0.7,
-        top_k: int = 50,
         top_p: float = 0.9,
-        repetition_penalty: float = 1.2,
-        length_penalty: float = 1.0,
+        top_k: int = 50,
+        repetition_penalty: float = 1.1,
         do_sample: bool = True,
-        num_beams: int = 1,
+        pad_token_id: int = 0,
+        eos_token_id: int = None,
+        past_key_values: Optional[Tuple[torch.Tensor]] = None,
     ) -> torch.Tensor:
-        """生成文本"""
+        """生成文本
+        
+        参数:
+            input_ids: 输入token的ID [batch_size, seq_len]
+            attention_mask: 注意力掩码 [batch_size, seq_len]
+            max_length: 最大生成长度
+            temperature: 采样温度
+            top_p: 核采样的概率阈值
+            top_k: top-k采样的k值
+            repetition_penalty: 重复惩罚系数
+            do_sample: 是否使用采样
+            pad_token_id: 填充token的ID
+            eos_token_id: 结束token的ID
+            past_key_values: 上一轮对话的KV缓存
+        """
         batch_size = input_ids.shape[0]
         cur_len = input_ids.shape[1]
         
@@ -209,11 +219,14 @@ class MiniLLM(nn.Module):
         
         # 生成文本
         while cur_len < max_length:
-            # 前向传播获取logits
-            logits = self.forward(
+            outputs = self.forward(
                 input_ids=generated_ids,
-                use_cache=True
-            )[0]  # forward返回(logits, loss)，我们只需要logits
+                attention_mask=attention_mask,
+                use_cache=True,
+                past_key_values=past_key_values
+            )
+            logits = outputs[0]
+            past_key_values = outputs[1] if len(outputs) > 1 else None
             
             # 获取最后一个时间步的logits
             next_token_logits = logits[:, -1, :]
@@ -257,7 +270,7 @@ class MiniLLM(nn.Module):
             cur_len += 1
             
             # 检查是否生成了结束符
-            if (generated_ids == self.config.eos_token_id).any(dim=1).all():
+            if (generated_ids == eos_token_id).any(dim=1).all():
                 break
         
         return generated_ids 
@@ -307,3 +320,78 @@ class MiniLLM(nn.Module):
             torch.quantization.convert(self, inplace=True)
         
         return self 
+
+    def chat(
+        self,
+        tokenizer,
+        messages: List[Dict[str, str]],
+        max_length: int = 2048,
+        temperature: float = 0.7,
+        top_p: float = 0.9,
+        top_k: int = 50,
+        repetition_penalty: float = 1.1,
+        do_sample: bool = True,
+        system_prompt: str = "你是一个有帮助的AI助手。"
+    ) -> str:
+        """对话生成
+        
+        参数:
+            tokenizer: 分词器
+            messages: 对话历史，格式为 [{"role": "user", "content": "..."}, {"role": "assistant", "content": "..."}]
+            max_length: 最大生成长度
+            temperature: 采样温度
+            top_p: 核采样的概率阈值
+            top_k: top-k采样的k值
+            repetition_penalty: 重复惩罚系数
+            do_sample: 是否使用采样
+            system_prompt: 系统提示词
+        """
+        # 构建输入文本
+        input_text = f"<system>{system_prompt}</system>\n"
+        for msg in messages:
+            role = msg["role"]
+            content = msg["content"]
+            if role == "user":
+                input_text += f"<human>{content}</human>\n"
+            elif role == "assistant":
+                input_text += f"<assistant>{content}</assistant>\n"
+        input_text += "<assistant>"  # 添加生成标记
+        
+        # 编码输入
+        inputs = tokenizer(
+            input_text,
+            return_tensors="pt",
+            truncation=True,
+            max_length=max_length
+        )
+        input_ids = inputs["input_ids"].to(self.device)
+        attention_mask = inputs["attention_mask"].to(self.device)
+        
+        # 启用 KV 缓存
+        self.enable_kv_cache()
+        
+        # 生成回复
+        with torch.no_grad():
+            output_ids = self.generate(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                max_length=max_length,
+                temperature=temperature,
+                top_p=top_p,
+                top_k=top_k,
+                repetition_penalty=repetition_penalty,
+                do_sample=do_sample,
+                pad_token_id=tokenizer.pad_token_id,
+                eos_token_id=tokenizer.encode("</assistant>", add_special_tokens=False)[0]
+            )
+        
+        # 禁用 KV 缓存
+        self.disable_kv_cache()
+        
+        # 解码输出
+        response = tokenizer.decode(output_ids[0], skip_special_tokens=True)
+        
+        # 提取助手回复部分
+        response = response.split("<assistant>")[-1].split("</assistant>")[0].strip()
+        
+        return response 

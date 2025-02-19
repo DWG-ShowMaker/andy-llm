@@ -11,6 +11,7 @@ from .early_stopping import EarlyStopping
 from transformers import get_cosine_schedule_with_warmup, get_linear_schedule_with_warmup
 from torch.cuda.amp import autocast, GradScaler
 import logging
+import torch.nn.functional as F
 
 class Trainer:
     def __init__(
@@ -25,25 +26,23 @@ class Trainer:
         self.val_dataloader = val_dataloader
         self.config = config
         
-        # 设置设备
-        self.device = torch.device(config.device)
-        self.model.to(self.device)
+        # 将模型移动到指定设备
+        self.device = torch.device(config.device if torch.cuda.is_available() else "cpu")
+        self.model = self.model.to(self.device)
         
         # 多GPU支持
         if config.n_gpu > 1:
             self.model = torch.nn.DataParallel(self.model)
         
-        # 优化器
+        # 配置优化器
         self.optimizer = torch.optim.AdamW(
-            model.parameters(),
+            self.model.parameters(),
             lr=config.learning_rate,
-            betas=(config.adam_beta1, config.adam_beta2),
-            eps=config.adam_epsilon,
             weight_decay=config.weight_decay
         )
         
-        # 混合精度训练
-        self.scaler = GradScaler() if config.fp16 else None
+        # 配置混合精度训练
+        self.scaler = torch.cuda.amp.GradScaler() if config.fp16 else None
         
         # 日志设置
         logging.basicConfig(level=logging.INFO)
@@ -158,41 +157,51 @@ class Trainer:
         )
         
         for step, batch in enumerate(progress_bar):
-            # 将数据移到设备上，但排除metadata
-            batch = {
-                k: v.to(self.device) if isinstance(v, torch.Tensor) else v 
-                for k, v in batch.items()
-            }
+            # 将数据移动到设备
+            input_ids = batch['input_ids'].to(self.device)
+            attention_mask = batch['attention_mask'].to(self.device)
+            labels = batch['labels'].to(self.device)
             
             # 清零梯度
             self.optimizer.zero_grad()
             
-            # 前向传播（使用混合精度）
+            # 使用自动混合精度
             if self.config.fp16:
-                with autocast():
-                    outputs = self.model(**batch)
-                    loss = outputs.loss / self.gradient_accumulation_steps
+                with torch.cuda.amp.autocast():
+                    outputs = self.model(input_ids, attention_mask)
+                    loss = F.cross_entropy(
+                        outputs.view(-1, outputs.size(-1)), 
+                        labels.view(-1),
+                        ignore_index=-100
+                    )
                 
-                # 反向传播
+                # 缩放损失并反向传播
                 self.scaler.scale(loss).backward()
                 
+                # 梯度裁剪
                 if self.config.max_grad_norm > 0:
                     self.scaler.unscale_(self.optimizer)
                     torch.nn.utils.clip_grad_norm_(
-                        self.model.parameters(),
+                        self.model.parameters(), 
                         self.config.max_grad_norm
                     )
                 
+                # 更新参数
                 self.scaler.step(self.optimizer)
                 self.scaler.update()
             else:
-                outputs = self.model(**batch)
-                loss = outputs.loss / self.gradient_accumulation_steps
+                outputs = self.model(input_ids, attention_mask)
+                loss = F.cross_entropy(
+                    outputs.view(-1, outputs.size(-1)), 
+                    labels.view(-1),
+                    ignore_index=-100
+                )
+                
                 loss.backward()
                 
                 if self.config.max_grad_norm > 0:
                     torch.nn.utils.clip_grad_norm_(
-                        self.model.parameters(),
+                        self.model.parameters(), 
                         self.config.max_grad_norm
                     )
                 
@@ -234,12 +243,15 @@ class Trainer:
         
         for batch in progress_bar:
             # 同样处理验证集数据
-            batch = {
-                k: v.to(self.device) if isinstance(v, torch.Tensor) else v 
-                for k, v in batch.items()
-            }
-            outputs = self.model(**batch)
-            loss = outputs.loss
+            input_ids = batch['input_ids'].to(self.device)
+            attention_mask = batch['attention_mask'].to(self.device)
+            labels = batch['labels'].to(self.device)
+            outputs = self.model(input_ids, attention_mask)
+            loss = F.cross_entropy(
+                outputs.view(-1, outputs.size(-1)), 
+                labels.view(-1),
+                ignore_index=-100
+            )
             total_loss += loss.item()
             
             # 更新进度条
