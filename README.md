@@ -10,6 +10,13 @@ Andy-LLM 是一个基于 Transformer 架构的轻量级中文对话语言模型�
 - 增量式对话生成
 - 支持 CPU/GPU/MPS 设备
 - 完整的训练部署流程
+- 支持 vLLM 高性能部署
+
+## 文档
+
+- [快速开始](docs/quickstart.md)
+- [CUDA 训练和部署指南](docs/cuda_guide.md)
+- [训练参数配置](docs/training.md)
 
 ## 项目结构
 
